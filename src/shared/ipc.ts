@@ -8,6 +8,7 @@ export const IPC = {
   projectsDelete: 'projects:delete',
 
   tasksList: 'tasks:list',
+  tasksListAll: 'tasks:listAll',
   tasksUpsert: 'tasks:upsert',
   tasksReorder: 'tasks:reorder',
   tasksDelete: 'tasks:delete',

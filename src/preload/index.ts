@@ -20,6 +20,8 @@ const api = {
   },
   tasks: {
     list: (projectId: string) => ipcRenderer.invoke(IPC.tasksList, projectId),
+    listAll: (filter?: { project_id?: string; stage?: Task['stage']; blocked_only?: boolean }) =>
+      ipcRenderer.invoke(IPC.tasksListAll, filter),
     upsert: (input: TaskInput) => ipcRenderer.invoke(IPC.tasksUpsert, input),
     reorder: (order: { id: string; sort_order: number; stage?: Task['stage'] }[]) =>
       ipcRenderer.invoke(IPC.tasksReorder, order),

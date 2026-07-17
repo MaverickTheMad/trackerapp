@@ -3,10 +3,11 @@ import { api } from './lib/api'
 import type { SyncStatus } from '@shared/types'
 import { Overview } from './views/Overview'
 import { ProjectDetail } from './views/ProjectDetail'
+import { TaskDashboard } from './views/TaskDashboard'
 import { Costs } from './views/Costs'
 import { Settings } from './views/Settings'
 
-type View = 'overview' | 'costs' | 'settings' | 'project'
+type View = 'overview' | 'tasks' | 'costs' | 'settings' | 'project'
 
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('overview')
@@ -56,6 +57,12 @@ export default function App(): JSX.Element {
           ▦ Overview
         </button>
         <button
+          className={`nav-item ${view === 'tasks' ? 'active' : ''}`}
+          onClick={() => nav('tasks')}
+        >
+          ☑ Tasks
+        </button>
+        <button
           className={`nav-item ${view === 'costs' ? 'active' : ''}`}
           onClick={() => nav('costs')}
         >
@@ -78,6 +85,7 @@ export default function App(): JSX.Element {
 
       <main className="main">
         {view === 'overview' && <Overview onOpenProject={openProject} sync={sync} />}
+        {view === 'tasks' && <TaskDashboard />}
         {view === 'project' && activeProjectId && (
           <ProjectDetail projectId={activeProjectId} onBack={() => nav('overview')} />
         )}

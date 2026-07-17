@@ -3,6 +3,7 @@ import { api } from '../lib/api'
 import type { ProjectOverview, ProjectInput, SyncStatus, ClaudeSession } from '@shared/types'
 import { ProjectFormModal } from '../components/ProjectFormModal'
 import { UnassignedSessions } from '../components/UnassignedSessions'
+import { ago } from '../lib/time'
 
 function slugify(name: string): string {
   return name
@@ -10,14 +11,6 @@ function slugify(name: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-}
-
-// Relative age of an ISO timestamp (same shape as ProjectDetail's `ago`).
-function ago(iso: string): string {
-  const secs = (Date.now() - new Date(iso).getTime()) / 1000
-  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))}m ago`
-  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`
-  return `${Math.round(secs / 86400)}d ago`
 }
 
 function stateBadge(state: string | null): JSX.Element {

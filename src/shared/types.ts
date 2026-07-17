@@ -80,6 +80,12 @@ export interface TaskInput {
   sort_order?: number
 }
 
+// A task joined to its project's name for the cross-project dashboard.
+// project_name is null-safe: tasks may have a null project_id per the schema.
+export interface TaskWithProject extends Task {
+  project_name: string | null
+}
+
 export interface ClaudeSession {
   id: string
   project_id: string | null

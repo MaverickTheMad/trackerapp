@@ -3,6 +3,7 @@ import type {
   ProjectOverview,
   Task,
   TaskInput,
+  TaskWithProject,
   ClaudeSession,
   Cost,
   CostInput,
@@ -30,6 +31,11 @@ export const api = {
   },
   tasks: {
     list: (projectId: string): Promise<Task[]> => raw.tasks.list(projectId),
+    listAll: (filter?: {
+      project_id?: string
+      stage?: Task['stage']
+      blocked_only?: boolean
+    }): Promise<TaskWithProject[]> => raw.tasks.listAll(filter),
     upsert: (input: TaskInput): Promise<Task> => raw.tasks.upsert(input),
     reorder: (order: { id: string; sort_order: number; stage?: Task['stage'] }[]): Promise<void> =>
       raw.tasks.reorder(order),

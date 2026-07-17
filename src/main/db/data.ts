@@ -6,6 +6,8 @@ import type {
   ProjectOverview,
   Task,
   TaskInput,
+  TaskStage,
+  TaskWithProject,
   ClaudeSession,
   Deployment,
   RepoActivity,
@@ -230,6 +232,36 @@ export async function getTasks(client: Client, projectId: string): Promise<Task[
     args: [projectId]
   })
   return res.rows.map(mapTask)
+}
+
+// Every task across all projects, each row carrying its project's name (left
+// join so tasks with a null project_id are still returned). Filters are applied
+// in SQL; a stable default order (project name, then sort_order) — the renderer
+// re-sorts. The row shape is tasks.* plus project_name, so mapTask still works.
+export async function getAllTasks(
+  client: Client,
+  filter?: { project_id?: string; stage?: TaskStage; blocked_only?: boolean }
+): Promise<TaskWithProject[]> {
+  const where: string[] = []
+  const args: (string | number)[] = []
+  if (filter?.project_id) {
+    where.push('t.project_id = ?')
+    args.push(filter.project_id)
+  }
+  if (filter?.stage) {
+    where.push('t.stage = ?')
+    args.push(filter.stage)
+  }
+  if (filter?.blocked_only) {
+    where.push("t.stage = 'blocked'")
+  }
+  const sql =
+    `select t.*, p.name as project_name
+     from tasks t left join projects p on p.id = t.project_id` +
+    (where.length ? ' where ' + where.join(' and ') : '') +
+    ' order by p.name collate nocase, t.sort_order, t.created_at'
+  const res = await client.execute({ sql, args })
+  return res.rows.map((r) => ({ ...mapTask(r), project_name: toStr(r.project_name) }))
 }
 
 export async function upsertTask(client: Client, input: TaskInput): Promise<Task> {

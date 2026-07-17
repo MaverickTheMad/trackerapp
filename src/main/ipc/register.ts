@@ -14,6 +14,7 @@ export function registerIpc(client: Client): void {
   ipcMain.handle(IPC.projectsDelete, (_e, id: string) => data.deleteProject(client, id))
 
   ipcMain.handle(IPC.tasksList, (_e, projectId: string) => data.getTasks(client, projectId))
+  ipcMain.handle(IPC.tasksListAll, (_e, filter) => data.getAllTasks(client, filter))
   ipcMain.handle(IPC.tasksUpsert, (_e, input) => data.upsertTask(client, input))
   ipcMain.handle(
     IPC.tasksReorder,
