@@ -1,0 +1,37 @@
+{
+  "name": "trackerapp",
+  "version": "0.1.2",
+  "description": "Personal desktop command center for projects across GitHub, Vercel, and Neon/Supabase, with manual task tracking and Claude Code time/cost estimation.",
+  "main": "./out/main/index.js",
+  "author": "mpaulreilly",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "package": "electron-vite build && electron-builder",
+    "release": "electron-vite build && electron-builder --publish always"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,36 @@
+appId: com.mpaulreilly.trackerapp
+productName: Project Tracker
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - package.json
+# libSQL local file + settings live in Electron's userData dir, not packaged.
+
+# Auto-update feed. electron-builder writes app-update.yml into the package from
+# this, and electron-updater reads GitHub Releases for newer versions. A PUBLIC
+# repo means installed apps download updates with no token; publishing releases
+# still needs a GH_TOKEN (repo scope) — see `npm run release`.
+# ⚠️ Set owner/repo to YOUR GitHub repo before the first release.
+publish:
+  provider: github
+  owner: MaverickTheMad
+  repo: trackerapp
+  releaseType: release
+
+# nsis: allow the updater to replace the installed app in place.
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+linux:
+  target:
+    - AppImage
