@@ -1,9 +1,12 @@
 import type { Client } from '@libsql/client'
-import { getProjects, getSetting, upsertDeployments } from '../db/data'
+import { getProjects, getAccount, upsertDeployments } from '../db/data'
 import type { Deployment } from '@shared/types'
 
-// Lists recent deployments for every project with a vercel_project_id. Read-only.
-// Vercel billing/usage costs are a separate pull in Phase 5.
+// Lists recent deployments for every project with a vercel_project_id AND a
+// linked Vercel account, using that account's token and team_id. Read-only.
+// Projects with a vercel id but no linked account are skipped (not an error —
+// surfaced as "needs account" in Phase 2). Vercel billing/usage costs are a
+// separate pull in Phase 5.
 
 const API = 'https://api.vercel.com'
 const LIMIT = 20
@@ -31,13 +34,8 @@ async function vercel<T>(path: string, token: string): Promise<T> {
 }
 
 export async function syncVercel(client: Client): Promise<string> {
-  const projects = (await getProjects(client)).filter((p) => p.vercel_project_id)
-  if (projects.length === 0) return 'no Vercel projects configured'
-
-  const token = (await getSetting(client, 'vercel_token')) ?? ''
-  if (!token) throw new Error('Vercel token not set — add it in Settings')
-  const teamId = (await getSetting(client, 'vercel_team_id')) ?? ''
-  const teamParam = teamId ? `&teamId=${encodeURIComponent(teamId)}` : ''
+  const projects = (await getProjects(client)).filter((p) => p.vercel_project_id && p.vercel_account_id)
+  if (projects.length === 0) return 'no Vercel projects with a linked account configured'
 
   let count = 0
   const errors: string[] = []
@@ -45,9 +43,16 @@ export async function syncVercel(client: Client): Promise<string> {
   for (const p of projects) {
     const pid = p.vercel_project_id as string
     try {
+      const account = await getAccount(client, p.vercel_account_id as string)
+      if (!account) {
+        errors.push(`${pid}: linked Vercel account not found`)
+        continue
+      }
+      const teamParam = account.team_id ? `&teamId=${encodeURIComponent(account.team_id)}` : ''
+
       const data = await vercel<{ deployments: VercelDeployment[] }>(
         `/v6/deployments?projectId=${encodeURIComponent(pid)}&limit=${LIMIT}${teamParam}`,
-        token
+        account.token
       )
       const rows: Deployment[] = (data.deployments ?? []).map((d) => ({
         id: d.uid,

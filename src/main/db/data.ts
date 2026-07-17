@@ -11,7 +11,9 @@ import type {
   RepoActivity,
   Cost,
   CostInput,
-  AppSettings
+  AppSettings,
+  Account,
+  AccountInput
 } from '@shared/types'
 
 // ── The data module ─────────────────────────────────────────────────────────
@@ -41,8 +43,21 @@ function mapProject(r: Row): Project {
     neon_project_id: toStr(r.neon_project_id),
     claude_cwd: toStr(r.claude_cwd),
     status: String(r.status) as Project['status'],
+    github_account_id: toStr(r.github_account_id),
+    vercel_account_id: toStr(r.vercel_account_id),
     created_at: String(r.created_at),
     updated_at: String(r.updated_at)
+  }
+}
+
+function mapAccount(r: Row): Account {
+  return {
+    id: String(r.id),
+    provider: String(r.provider) as Account['provider'],
+    label: String(r.label),
+    token: String(r.token),
+    team_id: toStr(r.team_id),
+    created_at: String(r.created_at)
   }
 }
 
@@ -136,8 +151,8 @@ export async function upsertProject(client: Client, input: ProjectInput): Promis
     sql: /* sql */ `
       insert into projects
         (id, name, slug, repo_full_name, vercel_project_id, neon_project_id,
-         claude_cwd, status, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         claude_cwd, status, github_account_id, vercel_account_id, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(id) do update set
         name = excluded.name,
         slug = excluded.slug,
@@ -146,6 +161,8 @@ export async function upsertProject(client: Client, input: ProjectInput): Promis
         neon_project_id = excluded.neon_project_id,
         claude_cwd = excluded.claude_cwd,
         status = excluded.status,
+        github_account_id = excluded.github_account_id,
+        vercel_account_id = excluded.vercel_account_id,
         updated_at = excluded.updated_at
     `,
     args: [
@@ -157,6 +174,8 @@ export async function upsertProject(client: Client, input: ProjectInput): Promis
       input.neon_project_id ?? null,
       input.claude_cwd ?? null,
       input.status ?? 'active',
+      input.github_account_id ?? null,
+      input.vercel_account_id ?? null,
       ts,
       ts
     ]
@@ -168,6 +187,40 @@ export async function upsertProject(client: Client, input: ProjectInput): Promis
 
 export async function deleteProject(client: Client, id: string): Promise<void> {
   await client.execute({ sql: 'delete from projects where id = ?', args: [id] })
+}
+
+// ── Accounts ─────────────────────────────────────────────────────────────────
+export async function getAccounts(client: Client): Promise<Account[]> {
+  const res = await client.execute('select * from accounts order by provider, label collate nocase')
+  return res.rows.map(mapAccount)
+}
+
+export async function getAccount(client: Client, id: string): Promise<Account | null> {
+  const res = await client.execute({ sql: 'select * from accounts where id = ?', args: [id] })
+  return res.rows[0] ? mapAccount(res.rows[0]) : null
+}
+
+export async function upsertAccount(client: Client, input: AccountInput): Promise<Account> {
+  const id = input.id ?? randomUUID()
+  await client.execute({
+    sql: /* sql */ `
+      insert into accounts (id, provider, label, token, team_id, created_at)
+      values (?, ?, ?, ?, ?, ?)
+      on conflict(id) do update set
+        provider = excluded.provider,
+        label = excluded.label,
+        token = excluded.token,
+        team_id = excluded.team_id
+    `,
+    args: [id, input.provider, input.label, input.token, input.team_id ?? null, now()]
+  })
+  const account = await getAccount(client, id)
+  if (!account) throw new Error('upsertAccount: row vanished after write')
+  return account
+}
+
+export async function deleteAccount(client: Client, id: string): Promise<void> {
+  await client.execute({ sql: 'delete from accounts where id = ?', args: [id] })
 }
 
 // ── Tasks ──────────────────────────────────────────────────────────────────
@@ -475,14 +528,27 @@ function startOfMonthIso(): string {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString()
 }
 
+// Monday 00:00 UTC of the current week. getUTCDay() is 0 (Sun)..6 (Sat); shift so
+// Monday is the first day (Sunday counts as 6 days into the prior Monday's week).
+function startOfWeekIso(): string {
+  const d = new Date()
+  const dow = d.getUTCDay()
+  const daysSinceMonday = (dow + 6) % 7
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday)
+  return monday.toISOString()
+}
+
 export async function getProjectsOverview(client: Client): Promise<ProjectOverview[]> {
   const projects = await getProjects(client)
   const monthStart = startOfMonthIso()
   const monthKey = monthStart.slice(0, 7)
+  const weekStart = startOfWeekIso()
 
   const overviews: ProjectOverview[] = []
   for (const p of projects) {
     const hours = await getProjectHours(client, p.id, monthStart)
+    const hoursWeek = await getProjectHours(client, p.id, weekStart)
 
     const costRes = await client.execute({
       sql: `select coalesce(sum(amount_usd), 0) as c
@@ -513,16 +579,65 @@ export async function getProjectsOverview(client: Client): Promise<ProjectOvervi
       args: [p.id]
     })
 
+    // Open-task counts by stage in one pass; open = anything not shipped.
+    const taskRes = await client.execute({
+      sql: `select
+              coalesce(sum(case when stage = 'backlog' then 1 else 0 end), 0) as backlog,
+              coalesce(sum(case when stage = 'in_progress' then 1 else 0 end), 0) as in_progress,
+              coalesce(sum(case when stage = 'blocked' then 1 else 0 end), 0) as blocked,
+              coalesce(sum(case when stage <> 'shipped' then 1 else 0 end), 0) as open
+            from tasks where project_id = ?`,
+      args: [p.id]
+    })
+
+    const oldestIpRes = await client.execute({
+      sql: `select min(created_at) as t from tasks
+            where project_id = ? and stage = 'in_progress'`,
+      args: [p.id]
+    })
+
+    // Last activity = latest of newest commit / deploy / session (no chat yet).
+    const activityRes = await client.execute({
+      sql: `select max(t) as t from (
+              select max(occurred_at) as t from repo_activity
+                where project_id = ? and kind = 'commit'
+              union all
+              select max(created_at) as t from deployments where project_id = ?
+              union all
+              select max(started_at) as t from claude_sessions where project_id = ?
+            )`,
+      args: [p.id, p.id, p.id]
+    })
+
+    // Latest production-target deploy failed (ERROR/CANCELED, case-insensitive).
+    const prodDepRes = await client.execute({
+      sql: `select state from deployments
+            where project_id = ? and lower(coalesce(target, '')) = 'production'
+            order by created_at desc limit 1`,
+      args: [p.id]
+    })
+    const prodState = prodDepRes.rows[0] ? (toStr(prodDepRes.rows[0].state) ?? '').toUpperCase() : ''
+
     const infraCost = toNum(costRes.rows[0].c)
     const claudeCost = toNum(claudeCostRes.rows[0].c)
     overviews.push({
       ...p,
       hours_this_month: hours,
+      hours_this_week: hoursWeek,
       cost_month_to_date: infraCost + claudeCost,
       infra_cost_month_to_date: infraCost,
       claude_cost_month_to_date: claudeCost,
       open_pr_count: toNum(prRes.rows[0].n),
-      latest_deployment_state: depRes.rows[0] ? toStr(depRes.rows[0].state) : null
+      latest_deployment_state: depRes.rows[0] ? toStr(depRes.rows[0].state) : null,
+      backlog_count: toNum(taskRes.rows[0].backlog),
+      in_progress_count: toNum(taskRes.rows[0].in_progress),
+      blocked_count: toNum(taskRes.rows[0].blocked),
+      open_task_count: toNum(taskRes.rows[0].open),
+      oldest_in_progress_at: toStr(oldestIpRes.rows[0].t),
+      last_activity_at: toStr(activityRes.rows[0].t),
+      production_deploy_failed: prodState === 'ERROR' || prodState === 'CANCELED',
+      needs_github_account: p.repo_full_name != null && p.github_account_id == null,
+      needs_vercel_account: p.vercel_project_id != null && p.vercel_account_id == null
     })
   }
   return overviews
@@ -530,26 +645,30 @@ export async function getProjectsOverview(client: Client): Promise<ProjectOvervi
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const SETTINGS_DEFAULTS: AppSettings = {
-  github_token: '',
-  vercel_token: '',
-  vercel_team_id: '',
   idle_cap_seconds: 1800,
-  sync_interval_minutes: 30
+  sync_interval_minutes: 30,
+  blocked_days: 3,
+  stuck_days: 7,
+  stale_days: 14,
+  chat_hours_in_combined: '0'
 }
 
 export async function getSettings(client: Client): Promise<AppSettings> {
   const res = await client.execute('select key, value from settings')
   const map = new Map(res.rows.map((r) => [String(r.key), r.value == null ? '' : String(r.value)]))
   return {
-    github_token: map.get('github_token') ?? SETTINGS_DEFAULTS.github_token,
-    vercel_token: map.get('vercel_token') ?? SETTINGS_DEFAULTS.vercel_token,
-    vercel_team_id: map.get('vercel_team_id') ?? SETTINGS_DEFAULTS.vercel_team_id,
     idle_cap_seconds: map.has('idle_cap_seconds')
       ? Number(map.get('idle_cap_seconds'))
       : SETTINGS_DEFAULTS.idle_cap_seconds,
     sync_interval_minutes: map.has('sync_interval_minutes')
       ? Number(map.get('sync_interval_minutes'))
-      : SETTINGS_DEFAULTS.sync_interval_minutes
+      : SETTINGS_DEFAULTS.sync_interval_minutes,
+    blocked_days: map.has('blocked_days')
+      ? Number(map.get('blocked_days'))
+      : SETTINGS_DEFAULTS.blocked_days,
+    stuck_days: map.has('stuck_days') ? Number(map.get('stuck_days')) : SETTINGS_DEFAULTS.stuck_days,
+    stale_days: map.has('stale_days') ? Number(map.get('stale_days')) : SETTINGS_DEFAULTS.stale_days,
+    chat_hours_in_combined: map.get('chat_hours_in_combined') ?? SETTINGS_DEFAULTS.chat_hours_in_combined
   }
 }
 

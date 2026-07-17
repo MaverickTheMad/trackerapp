@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import type { ProjectInput, Project, ProjectStatus } from '@shared/types'
+import { useEffect, useState } from 'react'
+import type { ProjectInput, Project, ProjectStatus, Account } from '@shared/types'
+import { api } from '../lib/api'
 
 // Create/edit a project. Used by Overview (add) and reusable for edit later.
 export function ProjectFormModal({
@@ -21,9 +22,19 @@ export function ProjectFormModal({
     vercel_project_id: initial?.vercel_project_id ?? '',
     neon_project_id: initial?.neon_project_id ?? '',
     claude_cwd: initial?.claude_cwd ?? '',
-    status: initial?.status ?? 'active'
+    status: initial?.status ?? 'active',
+    github_account_id: initial?.github_account_id ?? null,
+    vercel_account_id: initial?.vercel_account_id ?? null
   })
   const [saving, setSaving] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
+
+  useEffect(() => {
+    void api.accounts.list().then(setAccounts)
+  }, [])
+
+  const githubAccounts = accounts.filter((a) => a.provider === 'github')
+  const vercelAccounts = accounts.filter((a) => a.provider === 'vercel')
 
   const set = (patch: Partial<ProjectInput>): void => setForm((f) => ({ ...f, ...patch }))
 
@@ -37,7 +48,9 @@ export function ProjectFormModal({
         repo_full_name: form.repo_full_name || null,
         vercel_project_id: form.vercel_project_id || null,
         neon_project_id: form.neon_project_id || null,
-        claude_cwd: form.claude_cwd || null
+        claude_cwd: form.claude_cwd || null,
+        github_account_id: form.github_account_id || null,
+        vercel_account_id: form.vercel_account_id || null
       })
     } finally {
       setSaving(false)
@@ -94,6 +107,23 @@ export function ProjectFormModal({
           </label>
         </div>
 
+        <label className="field">
+          <span className="lab">GitHub account</span>
+          <select
+            className="inp"
+            value={form.github_account_id ?? ''}
+            onChange={(e) => set({ github_account_id: e.target.value || null })}
+          >
+            <option value="">none</option>
+            {githubAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+          <span className="hint">Which linked GitHub credential to sync this repo with.</span>
+        </label>
+
         <div className="row" style={{ gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
             <span className="lab">Vercel project id</span>
@@ -112,6 +142,23 @@ export function ProjectFormModal({
             />
           </label>
         </div>
+
+        <label className="field">
+          <span className="lab">Vercel account</span>
+          <select
+            className="inp"
+            value={form.vercel_account_id ?? ''}
+            onChange={(e) => set({ vercel_account_id: e.target.value || null })}
+          >
+            <option value="">none</option>
+            {vercelAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+          <span className="hint">Which linked Vercel credential to sync this project with.</span>
+        </label>
 
         <label className="field">
           <span className="lab">Claude cwd (absolute path)</span>

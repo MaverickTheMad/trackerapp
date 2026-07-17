@@ -1,10 +1,12 @@
 import type { Client } from '@libsql/client'
-import { getProjects, getSetting, upsertRepoActivity } from '../db/data'
+import { getProjects, getAccount, upsertRepoActivity } from '../db/data'
 import type { RepoActivity } from '@shared/types'
 
-// Pulls recent commits and PRs for every project that has a repo_full_name, using
-// a read-only fine-grained PAT from settings. Read-only, one page each — enough
-// for the Overview's open-PR count and the detail view's recent activity.
+// Pulls recent commits and PRs for every project that has a repo_full_name AND a
+// linked GitHub account, using that account's read-only fine-grained PAT.
+// Read-only, one page each — enough for the Overview's open-PR count and the
+// detail view's recent activity. Projects with a repo but no linked account are
+// skipped (not an error — surfaced as "needs account" in Phase 2).
 
 const API = 'https://api.github.com'
 const PER_PAGE = 30
@@ -44,11 +46,8 @@ async function gh<T>(path: string, token: string): Promise<T> {
 }
 
 export async function syncGithub(client: Client): Promise<string> {
-  const projects = (await getProjects(client)).filter((p) => p.repo_full_name)
-  if (projects.length === 0) return 'no repos configured'
-
-  const token = (await getSetting(client, 'github_token')) ?? ''
-  if (!token) throw new Error('GitHub token not set — add it in Settings')
+  const projects = (await getProjects(client)).filter((p) => p.repo_full_name && p.github_account_id)
+  if (projects.length === 0) return 'no repos with a linked GitHub account configured'
 
   let commitCount = 0
   let prCount = 0
@@ -57,6 +56,13 @@ export async function syncGithub(client: Client): Promise<string> {
   for (const p of projects) {
     const repo = p.repo_full_name as string
     try {
+      const account = await getAccount(client, p.github_account_id as string)
+      if (!account) {
+        errors.push(`${repo}: linked GitHub account not found`)
+        continue
+      }
+      const token = account.token
+
       const [commits, pulls] = await Promise.all([
         gh<GhCommit[]>(`/repos/${repo}/commits?per_page=${PER_PAGE}`, token),
         gh<GhPull[]>(

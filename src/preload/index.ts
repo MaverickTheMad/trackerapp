@@ -6,7 +6,8 @@ import type {
   CostInput,
   Task,
   AppSettings,
-  UpdateStatus
+  UpdateStatus,
+  AccountInput
 } from '@shared/types'
 
 // The single, typed surface the renderer is allowed to touch. No SQL, no client,
@@ -43,6 +44,11 @@ const api = {
       ipcRenderer.invoke(IPC.costsList, filter),
     upsert: (input: CostInput) => ipcRenderer.invoke(IPC.costsUpsert, input),
     remove: (id: string) => ipcRenderer.invoke(IPC.costsDelete, id)
+  },
+  accounts: {
+    list: () => ipcRenderer.invoke(IPC.accountsList),
+    upsert: (input: AccountInput) => ipcRenderer.invoke(IPC.accountsUpsert, input),
+    remove: (id: string) => ipcRenderer.invoke(IPC.accountsDelete, id)
   },
   sync: {
     run: () => ipcRenderer.invoke(IPC.syncRun),

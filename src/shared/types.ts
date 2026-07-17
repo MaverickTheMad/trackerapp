@@ -5,6 +5,7 @@
 export type ProjectStatus = 'active' | 'paused' | 'archived'
 export type TaskStage = 'backlog' | 'in_progress' | 'blocked' | 'shipped'
 export type CostSource = 'vercel' | 'neon' | 'domain' | 'manual'
+export type AccountProvider = 'github' | 'vercel'
 
 export interface Project {
   id: string
@@ -15,6 +16,8 @@ export interface Project {
   neon_project_id: string | null
   claude_cwd: string | null
   status: ProjectStatus
+  github_account_id: string | null
+  vercel_account_id: string | null
   created_at: string
   updated_at: string
 }
@@ -29,6 +32,27 @@ export interface ProjectInput {
   neon_project_id?: string | null
   claude_cwd?: string | null
   status?: ProjectStatus
+  github_account_id?: string | null
+  vercel_account_id?: string | null
+}
+
+// A linked GitHub/Vercel credential. Multiple accounts per provider let a
+// project pick which one to sync with (personal vs. team, etc).
+export interface Account {
+  id: string
+  provider: AccountProvider
+  label: string
+  token: string
+  team_id: string | null
+  created_at: string
+}
+
+export interface AccountInput {
+  id?: string
+  provider: AccountProvider
+  label: string
+  token: string
+  team_id?: string | null
 }
 
 export interface Task {
@@ -118,12 +142,26 @@ export interface CostInput {
 // Overview card: project plus derived aggregates.
 export interface ProjectOverview extends Project {
   hours_this_month: number
+  hours_this_week: number // code hours only (Claude sessions); chat hours land in Phase 4
   // Total month-to-date spend = infra/manual costs + estimated Claude cost.
   cost_month_to_date: number
   infra_cost_month_to_date: number // from the costs table (vercel/neon/domain/manual)
   claude_cost_month_to_date: number // estimated from Claude sessions started this month
   open_pr_count: number
-  latest_deployment_state: string | null
+  latest_deployment_state: string | null // latest deploy of any target
+  // Task counts by stage. open_task_count = everything not shipped.
+  backlog_count: number
+  in_progress_count: number
+  blocked_count: number
+  open_task_count: number
+  oldest_in_progress_at: string | null // min(created_at) of in_progress tasks
+  // Latest activity across commits/deploys/sessions (no chat until Phase 4).
+  last_activity_at: string | null
+  // Latest production-target deploy is in an ERROR/CANCELED state.
+  production_deploy_failed: boolean
+  // Phase 1 "needs account" state: a source is configured but unlinked.
+  needs_github_account: boolean
+  needs_vercel_account: boolean
 }
 
 export type SyncPhase = 'idle' | 'running' | 'error'
@@ -153,9 +191,10 @@ export interface UpdateStatus {
 }
 
 export interface AppSettings {
-  github_token: string
-  vercel_token: string
-  vercel_team_id: string
   idle_cap_seconds: number
   sync_interval_minutes: number
+  blocked_days: number
+  stuck_days: number
+  stale_days: number
+  chat_hours_in_combined: string
 }

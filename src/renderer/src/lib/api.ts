@@ -11,7 +11,9 @@ import type {
   Project,
   Deployment,
   RepoActivity,
-  UpdateStatus
+  UpdateStatus,
+  Account,
+  AccountInput
 } from '@shared/types'
 
 // Typed facade over the untyped window.api bridge. Views import from here so the
@@ -52,6 +54,11 @@ export const api = {
       raw.costs.list(filter),
     upsert: (input: CostInput): Promise<Cost> => raw.costs.upsert(input),
     remove: (id: string): Promise<void> => raw.costs.remove(id)
+  },
+  accounts: {
+    list: (): Promise<Account[]> => raw.accounts.list(),
+    upsert: (input: AccountInput): Promise<Account> => raw.accounts.upsert(input),
+    remove: (id: string): Promise<void> => raw.accounts.remove(id)
   },
   sync: {
     run: (): Promise<SyncStatus> => raw.sync.run(),

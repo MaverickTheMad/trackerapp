@@ -41,6 +41,10 @@ export function registerIpc(client: Client): void {
   ipcMain.handle(IPC.costsUpsert, (_e, input) => data.upsertCost(client, input))
   ipcMain.handle(IPC.costsDelete, (_e, id: string) => data.deleteCost(client, id))
 
+  ipcMain.handle(IPC.accountsList, () => data.getAccounts(client))
+  ipcMain.handle(IPC.accountsUpsert, (_e, input) => data.upsertAccount(client, input))
+  ipcMain.handle(IPC.accountsDelete, (_e, id: string) => data.deleteAccount(client, id))
+
   ipcMain.handle(IPC.syncRun, () => runSync(client))
   ipcMain.handle(IPC.syncStatus, () => getSyncStatus())
 

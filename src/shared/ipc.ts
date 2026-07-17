@@ -23,6 +23,10 @@ export const IPC = {
   costsUpsert: 'costs:upsert',
   costsDelete: 'costs:delete',
 
+  accountsList: 'accounts:list',
+  accountsUpsert: 'accounts:upsert',
+  accountsDelete: 'accounts:delete',
+
   syncRun: 'sync:run',
   syncStatus: 'sync:status',
 
