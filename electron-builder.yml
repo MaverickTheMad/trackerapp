@@ -19,11 +19,17 @@ publish:
   repo: trackerapp
   releaseType: release
 
-# nsis: allow the updater to replace the installed app in place.
+# Assisted (wizard) installer rather than oneClick: it elevates cleanly, is far
+# less likely to fail the shortcut step under antivirus/Controlled-Folder-Access,
+# and surfaces the real error if it does. Still supports electron-updater.
 nsis:
-  oneClick: true
+  oneClick: false
   perMachine: false
-  allowToChangeInstallationDirectory: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
 
 win:
   target:
