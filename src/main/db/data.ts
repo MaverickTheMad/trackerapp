@@ -16,7 +16,12 @@ import type {
   CostInput,
   AppSettings,
   Account,
-  AccountInput
+  AccountInput,
+  MetricsWeek,
+  WeeklyDigest,
+  DigestShipped,
+  DigestProjectHours,
+  DigestStuckTask
 } from '@shared/types'
 
 // ── The data module ─────────────────────────────────────────────────────────
@@ -769,6 +774,371 @@ export async function getProjectsOverview(client: Client): Promise<ProjectOvervi
     })
   }
   return overviews
+}
+
+// ── Metrics / insights (Phase 5) ──────────────────────────────────────────────
+// metrics_daily holds ONE row per (UTC day, project). Untagged sessions/chats
+// (null project_id) are not aggregated until they're assigned. Global figures =
+// sum across project_id for a day (no separate global row). All day keys use
+// substr(<ts>,1,10) over ISO-Z timestamps — portable and UTC-correct.
+
+// Monday-UTC week start (YYYY-MM-DD) for an arbitrary YYYY-MM-DD day key. Mirrors
+// the Monday-UTC logic in startOfWeekIso so the renderer never duplicates it.
+function weekStartOf(dayYmd: string): string {
+  const d = new Date(dayYmd + 'T00:00:00Z')
+  const daysSinceMonday = (d.getUTCDay() + 6) % 7
+  d.setUTCDate(d.getUTCDate() - daysSinceMonday)
+  return d.toISOString().slice(0, 10)
+}
+
+// Add n days to a YYYY-MM-DD day key, returning YYYY-MM-DD.
+function addDaysYmd(dayYmd: string, n: number): string {
+  const d = new Date(dayYmd + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+interface MetricAccum {
+  date: string
+  project_id: string
+  code_hours: number
+  chat_hours: number
+  claude_cost_usd: number
+  tasks_completed: number
+  deploys: number
+}
+
+// One-time historical backfill (migration run step). Buckets existing rows by UTC
+// day and project, for everything reconstructable from timestamps. tasks_open is
+// a point-in-time snapshot that CANNOT be reconstructed for past days, so it is
+// left at its default 0 for backfilled rows (only upsertMetricsForToday sets it,
+// for today). Idempotent: re-running preserves any existing tasks_open (the
+// on-conflict clause deliberately does not touch it).
+export async function backfillMetrics(client: Client): Promise<void> {
+  const rows = new Map<string, MetricAccum>()
+  const get = (date: string, pid: string): MetricAccum => {
+    const key = `${date}|${pid}`
+    let m = rows.get(key)
+    if (!m) {
+      m = {
+        date,
+        project_id: pid,
+        code_hours: 0,
+        chat_hours: 0,
+        claude_cost_usd: 0,
+        tasks_completed: 0,
+        deploys: 0
+      }
+      rows.set(key, m)
+    }
+    return m
+  }
+
+  const sess = await client.execute(`
+    select substr(started_at, 1, 10) as d, project_id as pid,
+           coalesce(sum(active_seconds), 0) as secs,
+           coalesce(sum(est_cost_usd), 0) as cost
+    from claude_sessions
+    where project_id is not null
+    group by d, pid`)
+  for (const r of sess.rows) {
+    const m = get(String(r.d), String(r.pid))
+    m.code_hours = toNum(r.secs) / 3600
+    m.claude_cost_usd = toNum(r.cost)
+  }
+
+  const chatRows = await client.execute(`
+    select substr(started_at, 1, 10) as d, project_id as pid,
+           coalesce(sum(active_seconds), 0) as secs
+    from chats
+    where project_id is not null
+    group by d, pid`)
+  for (const r of chatRows.rows) {
+    get(String(r.d), String(r.pid)).chat_hours = toNum(r.secs) / 3600
+  }
+
+  const done = await client.execute(`
+    select substr(completed_at, 1, 10) as d, project_id as pid, count(*) as n
+    from tasks
+    where completed_at is not null and project_id is not null
+    group by d, pid`)
+  for (const r of done.rows) {
+    get(String(r.d), String(r.pid)).tasks_completed = toNum(r.n)
+  }
+
+  const dep = await client.execute(`
+    select substr(created_at, 1, 10) as d, project_id as pid, count(*) as n
+    from deployments
+    where project_id is not null
+    group by d, pid`)
+  for (const r of dep.rows) {
+    get(String(r.d), String(r.pid)).deploys = toNum(r.n)
+  }
+
+  if (rows.size === 0) return
+  const stmts = [...rows.values()].map((m) => ({
+    // Note: tasks_open is intentionally omitted from the update clause so an
+    // existing today-row's snapshot survives a re-run of the backfill.
+    sql: /* sql */ `
+      insert into metrics_daily
+        (date, project_id, code_hours, chat_hours, claude_cost_usd,
+         tasks_completed, tasks_open, deploys)
+      values (?, ?, ?, ?, ?, ?, 0, ?)
+      on conflict(date, project_id) do update set
+        code_hours = excluded.code_hours,
+        chat_hours = excluded.chat_hours,
+        claude_cost_usd = excluded.claude_cost_usd,
+        tasks_completed = excluded.tasks_completed,
+        deploys = excluded.deploys
+    `,
+    args: [m.date, m.project_id, m.code_hours, m.chat_hours, m.claude_cost_usd, m.tasks_completed, m.deploys]
+  }))
+  await client.batch(stmts, 'write')
+}
+
+// Recompute TODAY's per-project rows in full, including the tasks_open snapshot
+// (current count of non-shipped tasks). Called at the end of every sync so today
+// stays live while past days freeze. code_hours here is session hours only — the
+// overview's manual adjust_hours fudge is intentionally excluded (it isn't tied
+// to a day), so a project's overview hours can differ slightly from the sum of
+// its daily code_hours. That difference is expected.
+export async function upsertMetricsForToday(client: Client): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10)
+  const projects = await getProjects(client)
+  const stmts: { sql: string; args: (string | number)[] }[] = []
+
+  for (const p of projects) {
+    const s = await client.execute({
+      sql: `select coalesce(sum(active_seconds), 0) as secs, coalesce(sum(est_cost_usd), 0) as cost
+            from claude_sessions where project_id = ? and substr(started_at, 1, 10) = ?`,
+      args: [p.id, day]
+    })
+    const c = await client.execute({
+      sql: `select coalesce(sum(active_seconds), 0) as secs
+            from chats where project_id = ? and substr(started_at, 1, 10) = ?`,
+      args: [p.id, day]
+    })
+    const tc = await client.execute({
+      sql: `select count(*) as n from tasks
+            where project_id = ? and substr(completed_at, 1, 10) = ?`,
+      args: [p.id, day]
+    })
+    const dp = await client.execute({
+      sql: `select count(*) as n from deployments
+            where project_id = ? and substr(created_at, 1, 10) = ?`,
+      args: [p.id, day]
+    })
+    const open = await client.execute({
+      sql: `select count(*) as n from tasks where project_id = ? and stage <> 'shipped'`,
+      args: [p.id]
+    })
+
+    const codeHours = toNum(s.rows[0].secs) / 3600
+    const chatHours = toNum(c.rows[0].secs) / 3600
+    const cost = toNum(s.rows[0].cost)
+    const completed = toNum(tc.rows[0].n)
+    const deploys = toNum(dp.rows[0].n)
+    const tasksOpen = toNum(open.rows[0].n)
+
+    // Only persist rows with signal (avoids a zero row per idle project per day).
+    if (codeHours || chatHours || cost || completed || deploys || tasksOpen) {
+      stmts.push({
+        sql: /* sql */ `
+          insert into metrics_daily
+            (date, project_id, code_hours, chat_hours, claude_cost_usd,
+             tasks_completed, tasks_open, deploys)
+          values (?, ?, ?, ?, ?, ?, ?, ?)
+          on conflict(date, project_id) do update set
+            code_hours = excluded.code_hours,
+            chat_hours = excluded.chat_hours,
+            claude_cost_usd = excluded.claude_cost_usd,
+            tasks_completed = excluded.tasks_completed,
+            tasks_open = excluded.tasks_open,
+            deploys = excluded.deploys
+        `,
+        args: [day, p.id, codeHours, chatHours, cost, completed, tasksOpen, deploys]
+      })
+    }
+  }
+  if (stmts.length) await client.batch(stmts, 'write')
+}
+
+// Weekly buckets (Monday-UTC) over metrics_daily, summed across projects unless a
+// project_id filter is given. Week bucketing is done here so the renderer stays
+// date-math free.
+export async function getMetricsWeekly(
+  client: Client,
+  filter: { from?: string; to?: string; project_id?: string } = {}
+): Promise<MetricsWeek[]> {
+  const where: string[] = ['1 = 1']
+  const args: string[] = []
+  if (filter.project_id) {
+    where.push('project_id = ?')
+    args.push(filter.project_id)
+  }
+  if (filter.from) {
+    where.push('date >= ?')
+    args.push(filter.from)
+  }
+  if (filter.to) {
+    where.push('date <= ?')
+    args.push(filter.to)
+  }
+  const res = await client.execute({
+    sql: `select date, code_hours, chat_hours, claude_cost_usd, tasks_completed, deploys
+          from metrics_daily where ${where.join(' and ')} order by date`,
+    args
+  })
+
+  const weeks = new Map<string, MetricsWeek>()
+  for (const r of res.rows) {
+    const wk = weekStartOf(String(r.date))
+    let m = weeks.get(wk)
+    if (!m) {
+      m = {
+        week_start: wk,
+        code_hours: 0,
+        chat_hours: 0,
+        claude_cost_usd: 0,
+        tasks_completed: 0,
+        deploys: 0
+      }
+      weeks.set(wk, m)
+    }
+    m.code_hours += toNum(r.code_hours)
+    m.chat_hours += toNum(r.chat_hours)
+    m.claude_cost_usd += toNum(r.claude_cost_usd)
+    m.tasks_completed += toNum(r.tasks_completed)
+    m.deploys += toNum(r.deploys)
+  }
+  return [...weeks.values()].sort((a, b) => a.week_start.localeCompare(b.week_start))
+}
+
+// Deterministic (no LLM) digest for a single Mon–Sun week. weekStart is a Monday
+// YYYY-MM-DD; the week is [weekStart, weekStart+7) by day key. Reads live source
+// tables (not metrics_daily) so it works even before a sync recomputes today.
+export async function getWeeklyDigest(
+  client: Client,
+  weekStart: string,
+  projectId?: string
+): Promise<WeeklyDigest> {
+  const from = weekStart // inclusive
+  const toExclusive = addDaysYmd(weekStart, 7) // exclusive
+  const weekEnd = addDaysYmd(weekStart, 6) // Sunday, inclusive (for display)
+  const pFilter = projectId ? ' and project_id = ?' : ''
+  const projects = await getProjects(client)
+  const nameOf = new Map(projects.map((p) => [p.id, p.name]))
+
+  // Shipped: successful (READY) production-target deploys created that week.
+  const shipRes = await client.execute({
+    sql: `select id, project_id, url, state, created_at from deployments
+          where lower(coalesce(target, '')) = 'production'
+            and upper(coalesce(state, '')) = 'READY'
+            and substr(created_at, 1, 10) >= ? and substr(created_at, 1, 10) < ?
+            ${projectId ? 'and project_id = ?' : ''}
+          order by created_at`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+  const shipped: DigestShipped[] = shipRes.rows.map((r) => ({
+    deployment_id: String(r.id),
+    project_id: String(r.project_id),
+    project_name: nameOf.get(String(r.project_id)) ?? null,
+    url: toStr(r.url),
+    state: toStr(r.state),
+    created_at: String(r.created_at)
+  }))
+
+  // Hours per project (code + chat) within the week.
+  const hoursMap = new Map<string, DigestProjectHours>()
+  const ensureHours = (pid: string): DigestProjectHours => {
+    let h = hoursMap.get(pid)
+    if (!h) {
+      h = { project_id: pid, project_name: nameOf.get(pid) ?? null, code_hours: 0, chat_hours: 0 }
+      hoursMap.set(pid, h)
+    }
+    return h
+  }
+  const codeRes = await client.execute({
+    sql: `select project_id as pid, coalesce(sum(active_seconds), 0) as secs
+          from claude_sessions
+          where project_id is not null
+            and substr(started_at, 1, 10) >= ? and substr(started_at, 1, 10) < ?${pFilter}
+          group by pid`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+  for (const r of codeRes.rows) ensureHours(String(r.pid)).code_hours = toNum(r.secs) / 3600
+  const chatRes = await client.execute({
+    sql: `select project_id as pid, coalesce(sum(active_seconds), 0) as secs
+          from chats
+          where project_id is not null
+            and substr(started_at, 1, 10) >= ? and substr(started_at, 1, 10) < ?${pFilter}
+          group by pid`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+  for (const r of chatRes.rows) ensureHours(String(r.pid)).chat_hours = toNum(r.secs) / 3600
+
+  // Total Claude cost (sessions) for the week.
+  const costRes = await client.execute({
+    sql: `select coalesce(sum(est_cost_usd), 0) as c from claude_sessions
+          where project_id is not null
+            and substr(started_at, 1, 10) >= ? and substr(started_at, 1, 10) < ?${pFilter}`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+
+  // Tasks completed vs opened in the week.
+  const completedRes = await client.execute({
+    sql: `select count(*) as n from tasks
+          where completed_at is not null
+            and substr(completed_at, 1, 10) >= ? and substr(completed_at, 1, 10) < ?${pFilter}`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+  const openedRes = await client.execute({
+    sql: `select count(*) as n from tasks
+          where substr(created_at, 1, 10) >= ? and substr(created_at, 1, 10) < ?${pFilter}`,
+    args: projectId ? [from, toExclusive, projectId] : [from, toExclusive]
+  })
+
+  // Currently stuck/blocked tasks (not week-scoped — a live snapshot). Uses the
+  // updated_at proxy for "since", consistent with the Task dashboard.
+  const settings = await getSettings(client)
+  const stuckRes = await client.execute({
+    sql: `select t.id, t.project_id, t.title, t.stage, t.updated_at
+          from tasks t
+          where t.stage in ('blocked', 'in_progress')${projectId ? ' and t.project_id = ?' : ''}`,
+    args: projectId ? [projectId] : []
+  })
+  const nowMs = Date.now()
+  const stuck_tasks: DigestStuckTask[] = []
+  for (const r of stuckRes.rows) {
+    const stage = String(r.stage) as DigestStuckTask['stage']
+    const days = (nowMs - new Date(String(r.updated_at)).getTime()) / 86400000
+    const threshold = stage === 'blocked' ? settings.blocked_days : settings.stuck_days
+    if (days > threshold) {
+      const pid = toStr(r.project_id)
+      stuck_tasks.push({
+        id: String(r.id),
+        project_id: pid,
+        project_name: pid ? nameOf.get(pid) ?? null : null,
+        title: String(r.title),
+        stage,
+        days: Math.round(days)
+      })
+    }
+  }
+
+  return {
+    week_start: from,
+    week_end: weekEnd,
+    project_id: projectId ?? null,
+    shipped,
+    hours_by_project: [...hoursMap.values()].sort(
+      (a, b) => b.code_hours + b.chat_hours - (a.code_hours + a.chat_hours)
+    ),
+    total_claude_cost_usd: toNum(costRes.rows[0].c),
+    tasks_completed: toNum(completedRes.rows[0].n),
+    tasks_opened: toNum(openedRes.rows[0].n),
+    stuck_tasks
+  }
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────

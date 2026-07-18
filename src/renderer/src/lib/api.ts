@@ -16,7 +16,9 @@ import type {
   Account,
   AccountInput,
   Chat,
-  ChatImportResult
+  ChatImportResult,
+  MetricsWeek,
+  WeeklyDigest
 } from '@shared/types'
 
 // Typed facade over the untyped window.api bridge. Views import from here so the
@@ -75,6 +77,12 @@ export const api = {
     assign: (chatId: string, projectId: string): Promise<void> =>
       raw.chats.assign(chatId, projectId),
     byProject: (projectId: string): Promise<Chat[]> => raw.chats.byProject(projectId)
+  },
+  metrics: {
+    weekly: (filter: { from?: string; to?: string; project_id?: string }): Promise<MetricsWeek[]> =>
+      raw.metrics.weekly(filter),
+    digest: (weekStart: string, projectId?: string): Promise<WeeklyDigest> =>
+      raw.metrics.digest(weekStart, projectId)
   },
   sync: {
     run: (): Promise<SyncStatus> => raw.sync.run(),

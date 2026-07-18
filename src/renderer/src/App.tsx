@@ -5,10 +5,11 @@ import { Overview } from './views/Overview'
 import { ProjectDetail } from './views/ProjectDetail'
 import { TaskDashboard } from './views/TaskDashboard'
 import { Chats } from './views/Chats'
+import { Insights } from './views/Insights'
 import { Costs } from './views/Costs'
 import { Settings } from './views/Settings'
 
-type View = 'overview' | 'tasks' | 'chats' | 'costs' | 'settings' | 'project'
+type View = 'overview' | 'tasks' | 'chats' | 'insights' | 'costs' | 'settings' | 'project'
 
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('overview')
@@ -70,6 +71,12 @@ export default function App(): JSX.Element {
           ✎ Chats
         </button>
         <button
+          className={`nav-item ${view === 'insights' ? 'active' : ''}`}
+          onClick={() => nav('insights')}
+        >
+          ◔ Insights
+        </button>
+        <button
           className={`nav-item ${view === 'costs' ? 'active' : ''}`}
           onClick={() => nav('costs')}
         >
@@ -94,6 +101,7 @@ export default function App(): JSX.Element {
         {view === 'overview' && <Overview onOpenProject={openProject} sync={sync} />}
         {view === 'tasks' && <TaskDashboard />}
         {view === 'chats' && <Chats />}
+        {view === 'insights' && <Insights />}
         {view === 'project' && activeProjectId && (
           <ProjectDetail projectId={activeProjectId} onBack={() => nav('overview')} />
         )}

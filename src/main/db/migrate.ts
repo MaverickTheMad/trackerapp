@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { Client } from '@libsql/client'
-import { getSetting } from './data'
+import { getSetting, backfillMetrics } from './data'
 
 // Ordered, append-only migrations. Each runs once; applied ids are recorded in
 // schema_migrations. To evolve the schema later, append a new entry — never edit
@@ -185,6 +185,29 @@ const MIGRATIONS: Migration[] = [
       );
       create index if not exists idx_chats_project on chats(project_id);
     `
+  },
+  {
+    id: '0004_v2_metrics',
+    sql: /* sql */ `
+      create table if not exists metrics_daily (
+        date text not null,                        -- YYYY-MM-DD, UTC day
+        project_id text not null references projects(id) on delete cascade,
+        code_hours real not null default 0,        -- claude_sessions active hours (no adjust_hours)
+        chat_hours real not null default 0,        -- imported chat active hours (separate bucket)
+        claude_cost_usd real not null default 0,   -- Claude Code est cost only (infra stays monthly)
+        tasks_completed integer not null default 0,
+        tasks_open integer not null default 0,     -- point-in-time snapshot; 0 for backfilled past days
+        deploys integer not null default 0,
+        primary key (date, project_id)
+      );
+      create index if not exists idx_metrics_daily_date on metrics_daily(date);
+    `,
+    // Backfill historical per-project daily metrics from what timestamps make
+    // reconstructable. tasks_open is a point-in-time snapshot and is left 0 for
+    // past days (see backfillMetrics).
+    run: async (client: Client): Promise<void> => {
+      await backfillMetrics(client)
+    }
   }
 ]
 

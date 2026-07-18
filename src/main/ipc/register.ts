@@ -81,6 +81,15 @@ export function registerIpc(client: Client): void {
     data.getChatsByProject(client, projectId)
   )
 
+  ipcMain.handle(
+    IPC.metricsWeekly,
+    (_e, filter: { from?: string; to?: string; project_id?: string }) =>
+      data.getMetricsWeekly(client, filter)
+  )
+  ipcMain.handle(IPC.metricsDigest, (_e, weekStart: string, projectId?: string) =>
+    data.getWeeklyDigest(client, weekStart, projectId)
+  )
+
   ipcMain.handle(IPC.syncRun, () => runSync(client))
   ipcMain.handle(IPC.syncStatus, () => getSyncStatus())
 

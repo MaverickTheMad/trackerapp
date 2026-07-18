@@ -34,6 +34,9 @@ export const IPC = {
   chatsAssign: 'chats:assign',
   chatsByProject: 'chats:byProject',
 
+  metricsWeekly: 'metrics:weekly',
+  metricsDigest: 'metrics:digest',
+
   syncRun: 'sync:run',
   syncStatus: 'sync:status',
 

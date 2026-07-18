@@ -197,6 +197,58 @@ export interface ProjectOverview extends Project {
   needs_vercel_account: boolean
 }
 
+// ── Insights (Phase 5) ────────────────────────────────────────────────────────
+// A weekly bucket of daily metrics (Monday-UTC week start). Summed across
+// projects when no project filter is applied. Claude cost only — infra costs
+// stay monthly on the Costs surface. tasks_open (a point-in-time snapshot) is
+// deliberately not summed into weekly buckets.
+export interface MetricsWeek {
+  week_start: string // YYYY-MM-DD, Monday UTC
+  code_hours: number
+  chat_hours: number
+  claude_cost_usd: number
+  tasks_completed: number
+  deploys: number
+}
+
+export interface DigestShipped {
+  deployment_id: string
+  project_id: string
+  project_name: string | null
+  url: string | null
+  state: string | null
+  created_at: string
+}
+
+export interface DigestProjectHours {
+  project_id: string
+  project_name: string | null
+  code_hours: number
+  chat_hours: number
+}
+
+export interface DigestStuckTask {
+  id: string
+  project_id: string | null
+  project_name: string | null
+  title: string
+  stage: TaskStage
+  days: number // days since last change (updated_at proxy)
+}
+
+// Deterministic (no LLM) weekly digest for a Mon–Sun week.
+export interface WeeklyDigest {
+  week_start: string // Monday, YYYY-MM-DD
+  week_end: string // Sunday (inclusive), YYYY-MM-DD
+  project_id: string | null
+  shipped: DigestShipped[] // successful production deploys that week
+  hours_by_project: DigestProjectHours[]
+  total_claude_cost_usd: number
+  tasks_completed: number
+  tasks_opened: number
+  stuck_tasks: DigestStuckTask[] // current blocked/in-progress beyond thresholds
+}
+
 export type SyncPhase = 'idle' | 'running' | 'error'
 
 export interface SyncStatus {

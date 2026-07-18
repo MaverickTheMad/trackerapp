@@ -60,6 +60,12 @@ const api = {
       ipcRenderer.invoke(IPC.chatsAssign, chatId, projectId),
     byProject: (projectId: string) => ipcRenderer.invoke(IPC.chatsByProject, projectId)
   },
+  metrics: {
+    weekly: (filter: { from?: string; to?: string; project_id?: string }) =>
+      ipcRenderer.invoke(IPC.metricsWeekly, filter),
+    digest: (weekStart: string, projectId?: string) =>
+      ipcRenderer.invoke(IPC.metricsDigest, weekStart, projectId)
+  },
   sync: {
     run: () => ipcRenderer.invoke(IPC.syncRun),
     status: () => ipcRenderer.invoke(IPC.syncStatus)

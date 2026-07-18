@@ -1,5 +1,6 @@
 import type { Client } from '@libsql/client'
 import type { SyncStatus } from '@shared/types'
+import { upsertMetricsForToday } from '../db/data'
 import { syncGithub } from './github'
 import { syncVercel } from './vercel'
 import { syncClaude } from './claude'
@@ -48,6 +49,17 @@ export async function runSync(client: Client): Promise<SyncStatus> {
     await runSource('github', () => syncGithub(client), results)
     await runSource('vercel', () => syncVercel(client), results)
     await runSource('claude', () => syncClaude(client), results)
+
+    // Refresh today's metrics after sources land. Isolated like a source so a
+    // failure here surfaces in status without blowing up the whole sync.
+    await runSource(
+      'metrics',
+      async () => {
+        await upsertMetricsForToday(client)
+        return "today's metrics recomputed"
+      },
+      results
+    )
 
     const anyError = Object.values(results).some((r) => !r.ok)
     status = {
