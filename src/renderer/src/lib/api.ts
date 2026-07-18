@@ -14,7 +14,9 @@ import type {
   RepoActivity,
   UpdateStatus,
   Account,
-  AccountInput
+  AccountInput,
+  Chat,
+  ChatImportResult
 } from '@shared/types'
 
 // Typed facade over the untyped window.api bridge. Views import from here so the
@@ -65,6 +67,14 @@ export const api = {
     list: (): Promise<Account[]> => raw.accounts.list(),
     upsert: (input: AccountInput): Promise<Account> => raw.accounts.upsert(input),
     remove: (id: string): Promise<void> => raw.accounts.remove(id)
+  },
+  chats: {
+    import: (): Promise<ChatImportResult> => raw.chats.import(),
+    list: (): Promise<Chat[]> => raw.chats.list(),
+    unassigned: (): Promise<Chat[]> => raw.chats.unassigned(),
+    assign: (chatId: string, projectId: string): Promise<void> =>
+      raw.chats.assign(chatId, projectId),
+    byProject: (projectId: string): Promise<Chat[]> => raw.chats.byProject(projectId)
   },
   sync: {
     run: (): Promise<SyncStatus> => raw.sync.run(),

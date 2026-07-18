@@ -5,6 +5,7 @@ import type { Client } from '@libsql/client'
 import { getProjects, getSetting, upsertSessions } from '../db/data'
 import type { ClaudeSession, Project } from '@shared/types'
 import { estimateCostUsd } from './pricing'
+import { activeSeconds } from '../lib/activeSeconds'
 
 // In-process Claude Code log parser. Reads <home>/.claude/projects/**/*.jsonl
 // (one file per session) directly — no collector, no network. Idempotent: keyed
@@ -112,13 +113,8 @@ function parseSession(
   const started = timestamps[0]
   const ended = timestamps[timestamps.length - 1]
 
-  // active_seconds: sum consecutive gaps, but any gap over the idle cap counts as
-  // zero so an idle-open session doesn't inflate hours.
-  let activeSeconds = 0
-  for (let i = 1; i < timestamps.length; i++) {
-    const gap = (timestamps[i] - timestamps[i - 1]) / 1000
-    if (gap > 0 && gap <= idleCap) activeSeconds += gap
-  }
+  // active_seconds: idle-capped sum of consecutive gaps (shared helper).
+  const activeSecs = activeSeconds(timestamps, idleCap)
 
   if (!cwd) cwd = decodeFolderName(folder)
 
@@ -129,7 +125,7 @@ function parseSession(
     model,
     started_at: new Date(started).toISOString(),
     ended_at: new Date(ended).toISOString(),
-    active_seconds: Math.round(activeSeconds),
+    active_seconds: activeSecs,
     ...tokens,
     est_cost_usd: estimateCostUsd(model, tokens),
     ingested_at: new Date().toISOString()

@@ -120,17 +120,49 @@ Dep: `fflate`. Parser in **main**, accepts `.zip` or extracted folder.
 Migration `0003_v2_chats`: `create table chats (...)` per addendum + `idx_chats_project`.
 Shared helper `src/main/lib/activeSeconds.ts` extracted from `claude.ts` `parseSession`
 (behavior-preserving refactor); chat parser reuses it.
-Parser `src/main/import/chatExport.ts`: locate `conversations.json`-style file; parse
-defensively (missing/renamed keys, unknown message types, empty conversations); started/ended =
-min/max message `created_at`; `active_seconds` via shared helper; `message_count`; no cost.
-**Inspect a real export ZIP before locking field mappings** — keep the key map in one constant.
+
+### VERIFIED field map (inspected from a real export, 2026-07 — the addendum's guess was close but incomplete)
+The export ZIP has `conversations.json` at root PLUS a `design_chats/` folder — **two different
+chat schemas**. Also present (ignore): `projects/`, `memories.json`, `reflections/`, `users.json`.
+
+**A. Regular chats — `conversations.json`** (array of conversations):
+- conversation: `uuid`, `name`, `summary`, `created_at`, `updated_at`, `account`, `chat_messages[]`.
+  **No project field** — import untagged, manual tagging.
+- message: `uuid`, `text` (flat string), `content[]` (typed blocks), `sender` (`"human"`|`"assistant"`),
+  `created_at`, `updated_at`. Dates ISO-8601 `…Z`.
+
+**B. Design chats — `design_chats/*.json`** (ONE object per file, not an array):
+- object: `uuid`, `title` (NOT `name`), `project: { uuid, name }` (**carries a Claude-project name**),
+  `created_at`, `updated_at`, `messages[]` (NOT `chat_messages`).
+- message: `uuid`, `role` (NOT `sender`), `content` (object, not array), `created_at`.
+  Dates use `+00:00` offsets (Date.parse handles both).
+
+### Parser `src/main/import/chatExport.ts` — normalize both schemas to one `chats` row
+- Locate `conversations.json` (any depth) and iterate `design_chats/*.json`. Tolerant field access
+  (missing/renamed keys, unknown message types, empty message arrays).
+- `id` = conversation/chat `uuid`. `name` = `name` ?? `title`. `message_count` = messages length.
+- `started_at`/`ended_at` = min/max message `created_at`; **fall back to conversation `created_at`/
+  `updated_at`** when there are no message timestamps (empty conversations still import — they carry
+  their own timestamps, so nothing is dropped).
+- `active_seconds` via the shared idle-cap helper over message timestamps.
+- **No cost field.** `source_export` = export filename (or date) for audit.
+- **Project tagging (per the chosen scope — "both, auto-use design project"):**
+  - Regular chats: `project_id = null` (manual tagging).
+  - Design chats: attempt to auto-match `project.name` to an app project by normalized name
+    (exact, then a confident unique contains-match either direction; mirror the conservative
+    `matchProject` style in `claude.ts`). On a unique confident match set `project_id`; otherwise
+    `null` (untagged). Store the design `project.name` in the chat's `summary` (or append) so the
+    origin is visible even when unmatched. The `coalesce` upsert rule below means a wrong auto-guess
+    is fixable by manual re-tag and won't be clobbered on re-import.
+
+### Data / IPC / renderer
 Data: `upsertChats` with `project_id = coalesce(chats.project_id, excluded.project_id)`;
-`getChatsByProject`, `getUnassignedChats`, `assignChat`; set `chats_last_import`.
-IPC: `chats:import` (opens `dialog.showOpenDialog` in main), `chats:list`, `chats:unassigned`,
-`chats:assign`, `chats:byProject`. Chat hours are a **separate bucket** everywhere; combined
-totals include them only if `chat_hours_in_combined='1'` (default off). Renderer: import button
-+ visible last-import date + manual-nature note; untagged-chat assignment view modeled on
-`UnassignedSessions.tsx`.
+`getChats`, `getChatsByProject`, `getUnassignedChats`, `assignChat`; set `chats_last_import`.
+IPC: `chats:import` (opens `dialog.showOpenDialog` in main — pick the `.zip`), `chats:list`,
+`chats:unassigned`, `chats:assign`, `chats:byProject`. Chat hours are a **separate bucket**
+everywhere; combined totals include them only if `chat_hours_in_combined='1'` (default off).
+Renderer: import button + visible last-import date + manual-nature note; untagged-chat assignment
+view modeled on `UnassignedSessions.tsx`.
 
 ## Phase 5 — Insight over time
 Dep: `recharts`. Migration `0004_v2_metrics`: `create table metrics_daily (...)` per addendum

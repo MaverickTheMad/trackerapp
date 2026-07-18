@@ -9,6 +9,7 @@ import type {
   TaskStage,
   TaskWithProject,
   ClaudeSession,
+  Chat,
   Deployment,
   RepoActivity,
   Cost,
@@ -94,6 +95,24 @@ function mapSession(r: Row): ClaudeSession {
     cache_creation_tokens: toNum(r.cache_creation_tokens),
     est_cost_usd: toNum(r.est_cost_usd),
     ingested_at: String(r.ingested_at)
+  }
+}
+
+function mapChat(r: Row): Chat {
+  return {
+    id: String(r.id),
+    project_id: toStr(r.project_id),
+    name: toStr(r.name),
+    summary: toStr(r.summary),
+    kind: String(r.kind) as Chat['kind'],
+    message_count: toNum(r.message_count),
+    started_at: String(r.started_at),
+    ended_at: String(r.ended_at),
+    active_seconds: toNum(r.active_seconds),
+    source_export: toStr(r.source_export),
+    created_at: String(r.created_at),
+    updated_at: toStr(r.updated_at),
+    imported_at: String(r.imported_at)
   }
 }
 
@@ -414,6 +433,83 @@ export async function assignSession(
   })
 }
 
+// ── Chats (imported from Claude data exports) ─────────────────────────────────
+// Upsert on chat id so re-importing the same export never duplicates. A manual
+// project tag is preserved across re-imports via the same coalesce idiom as
+// upsertSessions: only take the freshly-parsed project_id when none is stored.
+export async function upsertChats(client: Client, chats: Chat[]): Promise<void> {
+  if (chats.length === 0) return
+  const stmts = chats.map((c) => ({
+    sql: /* sql */ `
+      insert into chats
+        (id, project_id, name, summary, kind, message_count, started_at, ended_at,
+         active_seconds, source_export, created_at, updated_at, imported_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict(id) do update set
+        name = excluded.name,
+        summary = excluded.summary,
+        kind = excluded.kind,
+        message_count = excluded.message_count,
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        active_seconds = excluded.active_seconds,
+        source_export = excluded.source_export,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        imported_at = excluded.imported_at,
+        -- Preserve a manual project assignment across re-imports.
+        project_id = coalesce(chats.project_id, excluded.project_id)
+    `,
+    args: [
+      c.id,
+      c.project_id,
+      c.name,
+      c.summary,
+      c.kind,
+      c.message_count,
+      c.started_at,
+      c.ended_at,
+      c.active_seconds,
+      c.source_export,
+      c.created_at,
+      c.updated_at,
+      c.imported_at
+    ]
+  }))
+  await client.batch(stmts, 'write')
+}
+
+export async function getChats(client: Client): Promise<Chat[]> {
+  const res = await client.execute('select * from chats order by started_at desc')
+  return res.rows.map(mapChat)
+}
+
+export async function getChatsByProject(client: Client, projectId: string): Promise<Chat[]> {
+  const res = await client.execute({
+    sql: 'select * from chats where project_id = ? order by started_at desc',
+    args: [projectId]
+  })
+  return res.rows.map(mapChat)
+}
+
+export async function getUnassignedChats(client: Client): Promise<Chat[]> {
+  const res = await client.execute(
+    'select * from chats where project_id is null order by started_at desc'
+  )
+  return res.rows.map(mapChat)
+}
+
+export async function assignChat(
+  client: Client,
+  chatId: string,
+  projectId: string
+): Promise<void> {
+  await client.execute({
+    sql: 'update chats set project_id = ? where id = ?',
+    args: [projectId, chatId]
+  })
+}
+
 // ── Deployments & repo activity (written by sync, read by UI) ─────────────────
 export async function upsertDeployments(client: Client, rows: Deployment[]): Promise<void> {
   if (rows.length === 0) return
@@ -682,7 +778,8 @@ export const SETTINGS_DEFAULTS: AppSettings = {
   blocked_days: 3,
   stuck_days: 7,
   stale_days: 14,
-  chat_hours_in_combined: '0'
+  chat_hours_in_combined: '0',
+  chats_last_import: ''
 }
 
 export async function getSettings(client: Client): Promise<AppSettings> {
@@ -700,7 +797,9 @@ export async function getSettings(client: Client): Promise<AppSettings> {
       : SETTINGS_DEFAULTS.blocked_days,
     stuck_days: map.has('stuck_days') ? Number(map.get('stuck_days')) : SETTINGS_DEFAULTS.stuck_days,
     stale_days: map.has('stale_days') ? Number(map.get('stale_days')) : SETTINGS_DEFAULTS.stale_days,
-    chat_hours_in_combined: map.get('chat_hours_in_combined') ?? SETTINGS_DEFAULTS.chat_hours_in_combined
+    chat_hours_in_combined:
+      map.get('chat_hours_in_combined') ?? SETTINGS_DEFAULTS.chat_hours_in_combined,
+    chats_last_import: map.get('chats_last_import') ?? SETTINGS_DEFAULTS.chats_last_import
   }
 }
 

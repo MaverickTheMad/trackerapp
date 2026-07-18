@@ -164,6 +164,27 @@ const MIGRATIONS: Migration[] = [
         })
       }
     }
+  },
+  {
+    id: '0003_v2_chats',
+    sql: /* sql */ `
+      create table if not exists chats (
+        id text primary key,
+        project_id text references projects(id) on delete set null,
+        name text,
+        summary text,
+        kind text not null,               -- regular | design
+        message_count integer not null default 0,
+        started_at text not null,
+        ended_at text not null,
+        active_seconds integer not null default 0,
+        source_export text,               -- export filename/date, for audit
+        created_at text not null,         -- conversation-level created_at
+        updated_at text,                  -- conversation-level updated_at
+        imported_at text not null
+      );
+      create index if not exists idx_chats_project on chats(project_id);
+    `
   }
 ]
 

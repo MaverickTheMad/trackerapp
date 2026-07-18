@@ -28,6 +28,12 @@ export const IPC = {
   accountsUpsert: 'accounts:upsert',
   accountsDelete: 'accounts:delete',
 
+  chatsImport: 'chats:import',
+  chatsList: 'chats:list',
+  chatsUnassigned: 'chats:unassigned',
+  chatsAssign: 'chats:assign',
+  chatsByProject: 'chats:byProject',
+
   syncRun: 'sync:run',
   syncStatus: 'sync:status',
 

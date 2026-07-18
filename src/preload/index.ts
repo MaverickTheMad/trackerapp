@@ -52,6 +52,14 @@ const api = {
     upsert: (input: AccountInput) => ipcRenderer.invoke(IPC.accountsUpsert, input),
     remove: (id: string) => ipcRenderer.invoke(IPC.accountsDelete, id)
   },
+  chats: {
+    import: () => ipcRenderer.invoke(IPC.chatsImport),
+    list: () => ipcRenderer.invoke(IPC.chatsList),
+    unassigned: () => ipcRenderer.invoke(IPC.chatsUnassigned),
+    assign: (chatId: string, projectId: string) =>
+      ipcRenderer.invoke(IPC.chatsAssign, chatId, projectId),
+    byProject: (projectId: string) => ipcRenderer.invoke(IPC.chatsByProject, projectId)
+  },
   sync: {
     run: () => ipcRenderer.invoke(IPC.syncRun),
     status: () => ipcRenderer.invoke(IPC.syncStatus)

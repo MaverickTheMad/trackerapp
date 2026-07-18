@@ -102,6 +102,33 @@ export interface ClaudeSession {
   ingested_at: string
 }
 
+// A chat imported from a Claude data export. Hours live in their own bucket
+// (never merged into Claude-session/code hours). No cost — exports carry none.
+export type ChatKind = 'regular' | 'design'
+
+export interface Chat {
+  id: string
+  project_id: string | null
+  name: string | null
+  summary: string | null
+  kind: ChatKind
+  message_count: number
+  started_at: string
+  ended_at: string
+  active_seconds: number
+  source_export: string | null
+  created_at: string // conversation-level created_at
+  updated_at: string | null // conversation-level updated_at
+  imported_at: string
+}
+
+// Result of a chats:import run (main opens the file picker; may be canceled).
+export interface ChatImportResult {
+  imported: number
+  canceled: boolean
+  last_import: string | null
+}
+
 export interface Deployment {
   id: string
   project_id: string
@@ -203,4 +230,5 @@ export interface AppSettings {
   stuck_days: number
   stale_days: number
   chat_hours_in_combined: string
+  chats_last_import: string // ISO timestamp of the last chat-export import, '' if never
 }

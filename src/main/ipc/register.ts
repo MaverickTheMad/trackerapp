@@ -1,10 +1,13 @@
-import { ipcMain } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import type { Client } from '@libsql/client'
 import { IPC } from '@shared/ipc'
-import type { Task } from '@shared/types'
+import type { Task, ChatImportResult } from '@shared/types'
 import * as data from '../db/data'
+import { parseChatExport } from '../import/chatExport'
 import { runSync, getSyncStatus } from '../sync'
 import { checkForUpdates, quitAndInstall, getUpdateStatus } from '../updater'
+
+const DEFAULT_IDLE_CAP = 1800
 
 // Wires every IPC channel to exactly one data-module or sync call. The renderer
 // never sees SQL or the client — only these typed request/response shapes.
@@ -45,6 +48,38 @@ export function registerIpc(client: Client): void {
   ipcMain.handle(IPC.accountsList, () => data.getAccounts(client))
   ipcMain.handle(IPC.accountsUpsert, (_e, input) => data.upsertAccount(client, input))
   ipcMain.handle(IPC.accountsDelete, (_e, id: string) => data.deleteAccount(client, id))
+
+  // Chats: import opens a native file picker for the export .zip, parses it in
+  // main, upserts (coalesce preserves manual tags), then stamps chats_last_import.
+  ipcMain.handle(IPC.chatsImport, async (): Promise<ChatImportResult> => {
+    const win = BrowserWindow.getFocusedWindow()
+    const opts = {
+      title: 'Select Claude data export (.zip)',
+      properties: ['openFile' as const],
+      filters: [{ name: 'Claude export', extensions: ['zip'] }]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || res.filePaths.length === 0) {
+      const settings = await data.getSettings(client)
+      return { imported: 0, canceled: true, last_import: settings.chats_last_import || null }
+    }
+    const projects = await data.getProjects(client)
+    const idleCapRaw = await data.getSetting(client, 'idle_cap_seconds')
+    const idleCap = idleCapRaw ? Number(idleCapRaw) : DEFAULT_IDLE_CAP
+    const chats = await parseChatExport(res.filePaths[0], projects, idleCap)
+    await data.upsertChats(client, chats)
+    const ts = new Date().toISOString()
+    await data.setSettings(client, { chats_last_import: ts })
+    return { imported: chats.length, canceled: false, last_import: ts }
+  })
+  ipcMain.handle(IPC.chatsList, () => data.getChats(client))
+  ipcMain.handle(IPC.chatsUnassigned, () => data.getUnassignedChats(client))
+  ipcMain.handle(IPC.chatsAssign, (_e, chatId: string, projectId: string) =>
+    data.assignChat(client, chatId, projectId)
+  )
+  ipcMain.handle(IPC.chatsByProject, (_e, projectId: string) =>
+    data.getChatsByProject(client, projectId)
+  )
 
   ipcMain.handle(IPC.syncRun, () => runSync(client))
   ipcMain.handle(IPC.syncStatus, () => getSyncStatus())

@@ -4,10 +4,11 @@ import type { SyncStatus } from '@shared/types'
 import { Overview } from './views/Overview'
 import { ProjectDetail } from './views/ProjectDetail'
 import { TaskDashboard } from './views/TaskDashboard'
+import { Chats } from './views/Chats'
 import { Costs } from './views/Costs'
 import { Settings } from './views/Settings'
 
-type View = 'overview' | 'tasks' | 'costs' | 'settings' | 'project'
+type View = 'overview' | 'tasks' | 'chats' | 'costs' | 'settings' | 'project'
 
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>('overview')
@@ -63,6 +64,12 @@ export default function App(): JSX.Element {
           ☑ Tasks
         </button>
         <button
+          className={`nav-item ${view === 'chats' ? 'active' : ''}`}
+          onClick={() => nav('chats')}
+        >
+          ✎ Chats
+        </button>
+        <button
           className={`nav-item ${view === 'costs' ? 'active' : ''}`}
           onClick={() => nav('costs')}
         >
@@ -86,6 +93,7 @@ export default function App(): JSX.Element {
       <main className="main">
         {view === 'overview' && <Overview onOpenProject={openProject} sync={sync} />}
         {view === 'tasks' && <TaskDashboard />}
+        {view === 'chats' && <Chats />}
         {view === 'project' && activeProjectId && (
           <ProjectDetail projectId={activeProjectId} onBack={() => nav('overview')} />
         )}
