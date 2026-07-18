@@ -1,6 +1,6 @@
 {
   "name": "trackerapp",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Personal desktop command center for projects across GitHub, Vercel, and Neon/Supabase, with manual task tracking and Claude Code time/cost estimation.",
   "main": "./out/main/index.js",
   "author": "mpaulreilly",
